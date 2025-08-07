@@ -6,6 +6,8 @@
     <title>Dibujar con Sonido</title>
     <!-- Tailwind CSS CDN para un diseño limpio y adaptable -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Incluir la fuente Inter desde Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <!-- Tone.js CDN para la generación de audio -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <!-- TensorFlow.js y Handpose para la detección de manos -->
@@ -16,21 +18,25 @@
             font-family: 'Inter', sans-serif;
             background-color: #1a202c; /* Fondo oscuro */
         }
-        canvas {
-            background-color: transparent;
+        /* El canvas debe superponerse al video para que se dibuje encima */
+        #drawingCanvas {
             position: absolute;
             top: 0;
             left: 0;
+            z-index: 10;
+        }
+        /* El video debe ajustarse al contenedor */
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 5;
+            object-fit: cover;
         }
         #video-container {
             position: relative;
             width: 100%;
             height: 80vh;
-        }
-        #webcam {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
         }
     </style>
 </head>
@@ -42,13 +48,13 @@
         <p class="text-gray-400 text-center mb-6">Usa tu cámara y junta el pulgar y el índice para dibujar y crear sonidos.</p>
         
         <!-- Mensaje de carga del modelo -->
-        <div id="loadingMessage" class="text-center text-gray-400 mb-4">
+        <div id="loadingMessage" class="text-center text-gray-400 mb-4 font-semibold">
             Cargando modelo de detección de manos... Por favor, espera.
         </div>
 
         <!-- Contenedor de la cámara y el lienzo de dibujo -->
-        <div id="video-container" class="relative w-full rounded-lg overflow-hidden shadow-inner">
-            <video id="webcam" class="w-full h-full rounded-lg border-2 border-gray-700"></video>
+        <div id="video-container" class="relative w-full rounded-lg overflow-hidden shadow-inner flex justify-center items-center">
+            <video id="webcam" playsinline autoplay class="w-full h-full rounded-lg border-2 border-gray-700"></video>
             <canvas id="drawingCanvas" class="w-full h-full rounded-lg border-2 border-gray-700"></canvas>
         </div>
 
@@ -96,41 +102,49 @@
             let lastTime = Date.now();
 
             // Configuración del sintetizador de Tone.js
-            const synth = new Tone.Synth({
-                oscillator: {
-                    type: "sine"
-                },
+            // Usamos un PolySynth para evitar que las notas se corten bruscamente
+            const synth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "sine" },
                 envelope: {
-                    attack: 0.005,
+                    attack: 0.01,
                     decay: 0.1,
                     sustain: 0.5,
                     release: 0.5,
                 }
             }).toDestination();
             
-            // Función para obtener la posición del evento (ratón o táctil)
-            function getEventPos(e) {
-                const rect = canvas.getBoundingClientRect();
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                return {
-                    x: clientX - rect.left,
-                    y: clientY - rect.top
-                };
-            }
-
+            // Variable para almacenar la frecuencia actual para el PolySynth
+            let currentFrequency = 0;
+            
             // Función para redimensionar el canvas y el video para que coincidan
             function resizeElements() {
                 const videoContainer = document.getElementById('video-container');
                 const { width, height } = videoContainer.getBoundingClientRect();
+                
+                // Asegurar que el canvas y el video tengan las mismas dimensiones que su contenedor
                 canvas.width = width;
                 canvas.height = height;
                 video.width = width;
                 video.height = height;
+
                 // Reiniciar el estilo del contexto después de redimensionar
                 ctx.lineWidth = 4;
                 ctx.lineCap = 'round';
                 ctx.strokeStyle = '#4A90E2'; // Color de línea azul vibrante
+            }
+
+            // Función de ayuda para mapear las coordenadas del video al canvas con efecto de espejo
+            function mapToCanvas(x, y) {
+                const videoWidth = video.videoWidth;
+                const videoHeight = video.videoHeight;
+                const canvasWidth = canvas.width;
+                const canvasHeight = canvas.height;
+                
+                // Mapear y revertir el eje X para el efecto de espejo
+                const mappedX = (1 - (x / videoWidth)) * canvasWidth;
+                const mappedY = (y / videoHeight) * canvasHeight;
+                
+                return { x: mappedX, y: mappedY };
             }
             
             // Iniciar la cámara y el modelo
@@ -144,24 +158,27 @@
                     await new Promise((resolve) => video.onloadedmetadata = resolve);
                     resizeElements();
                     
-                    // Se agrega una comprobación para asegurar que la biblioteca handpose esté cargada
+                    // Comprobar si la librería Handpose se ha cargado antes de intentar usarla
                     const loadHandposeModel = async () => {
                         if (typeof handpose !== 'undefined') {
+                            console.log("Cargando modelo de detección de manos...");
                             model = await handpose.load();
                             loadingMessage.style.display = 'none';
-                            detectHands();
+                            console.log("Modelo cargado. Inicando detección.");
+                            detectHands(); // Iniciar el bucle de detección de manos
                         } else {
-                            // Si handpose no está definido, esperar y volver a intentar
-                            console.error("Handpose is not defined. Retrying in 1 second...");
+                            // Reintentar si la librería aún no está disponible
+                            console.log("Handpose no está definido. Reintentando en 1 segundo...");
                             setTimeout(loadHandposeModel, 1000);
                         }
                     };
+                    
                     loadHandposeModel();
                 } catch (error) {
                     console.error("Error al acceder a la cámara o cargar el modelo:", error);
                     // Actualiza el mensaje de carga para que sea más informativo
                     loadingMessage.innerHTML = `
-                        <p class="text-red-400 mb-2">Error: No se pudo acceder a la cámara.</p>
+                        <p class="text-red-400 mb-2 font-semibold">Error: No se pudo acceder a la cámara.</p>
                         <p class="text-gray-400">Asegúrate de haber dado permiso para usar la cámara y recarga la página.</p>
                     `;
                 }
@@ -169,6 +186,17 @@
 
             // Detección de manos con el modelo
             async function detectHands() {
+                // Previene errores si el video no está listo
+                if (video.readyState < 2) {
+                    requestAnimationFrame(detectHands);
+                    return;
+                }
+
+                // Limpiar el canvas en cada fotograma si no estamos dibujando
+                if (!isDrawing) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+
                 const predictions = await model.estimateHands(video, true);
                 
                 if (predictions.length > 0) {
@@ -182,26 +210,40 @@
                         Math.pow(thumbTip[1] - indexTip[1], 2)
                     );
                     
-                    // Mapear las coordenadas de la cámara al lienzo
-                    const x = thumbTip[0] * (canvas.width / video.videoWidth);
-                    const y = thumbTip[1] * (canvas.height / video.videoHeight);
+                    // Obtener las coordenadas mapeadas del pulgar y el índice
+                    const thumbPos = mapToCanvas(thumbTip[0], thumbTip[1]);
+                    const indexPos = mapToCanvas(indexTip[0], indexTip[1]);
                     
+                    // Visualización de los puntos detectados para ayudar a la depuración
+                    ctx.fillStyle = isDrawing ? '#FFFFFF' : '#FFD700'; // Blanco al dibujar, amarillo para los puntos
+                    ctx.beginPath();
+                    ctx.arc(thumbPos.x, thumbPos.y, 8, 0, 2 * Math.PI); // Pulgar
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(indexPos.x, indexPos.y, 8, 0, 2 * Math.PI); // Índice
+                    ctx.fill();
+
                     // Si la distancia es pequeña, considerar que los dedos están juntos
                     const fingersArePinched = distance < 30; // Umbral para "juntar los dedos"
                     
-                    if (fingersArePinched && !isDrawing) {
-                        // Si los dedos se juntan y no estamos dibujando, empezar a dibujar
-                        isDrawing = true;
-                        [lastX, lastY] = [x, y];
-                        lastTime = Date.now();
-                        Tone.start();
-                        synth.triggerAttack();
-                    } else if (fingersArePinched && isDrawing) {
-                        // Si los dedos están juntos y estamos dibujando, continuar
-                        drawFromHand(x, y);
-                    } else if (!fingersArePinched && isDrawing) {
-                        // Si los dedos se separan y estábamos dibujando, detener
-                        stopDrawing();
+                    if (fingersArePinched) {
+                        // Si los dedos se juntan, empezar o continuar el dibujo y el sonido
+                        if (!isDrawing) {
+                            isDrawing = true;
+                            [lastX, lastY] = [thumbPos.x, thumbPos.y];
+                            lastTime = Date.now();
+                            Tone.start(); // Iniciar Tone.js con el primer gesto de usuario
+                            currentFrequency = 200;
+                            synth.triggerAttackRelease(currentFrequency, "8n");
+                        } else {
+                            // Continuar el dibujo y modular el sonido
+                            drawFromHand(thumbPos.x, thumbPos.y);
+                        }
+                    } else {
+                        // Si los dedos se separan, detener el dibujo y el sonido si estaban activos
+                        if (isDrawing) {
+                            stopDrawing();
+                        }
                     }
                 } else {
                     // Si no se detectan manos, detener el dibujo si estaba activo
@@ -221,13 +263,18 @@
                 // Calcular la velocidad del movimiento
                 const dx = x - lastX;
                 const dy = y - lastY;
-                const speed = Math.sqrt(dx * dx + dy * dy) / deltaTime;
+                const speed = Math.sqrt(dx * dx + dy * dy) / (deltaTime > 0 ? deltaTime : 1);
 
                 // Mapear la velocidad a la frecuencia del sonido
                 const minFreq = 100;
-                const maxFreq = 1000;
-                const frequency = minFreq + (speed * 0.5); // Factor ajustado para la webcam
-                synth.set({ frequency: Math.min(frequency, maxFreq) });
+                const maxFreq = 1200;
+                const mappedFreq = Math.min(minFreq + (speed * 0.8), maxFreq); // Factor ajustado
+                
+                // Actualiza la frecuencia solo si hay un cambio significativo para evitar cortes
+                if (Math.abs(mappedFreq - currentFrequency) > 5) {
+                    currentFrequency = mappedFreq;
+                    synth.triggerAttackRelease(currentFrequency, "16n");
+                }
                 
                 // Dibujar la línea
                 ctx.beginPath();
@@ -244,6 +291,7 @@
             function stopDrawing() {
                 if (!isDrawing) return;
                 isDrawing = false;
+                // Detener el sonido de forma más gradual
                 synth.triggerRelease();
             }
 
