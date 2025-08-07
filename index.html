@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dibujo en el Aire</title>
+    <!-- Tailwind CSS para un diseño responsivo y atractivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        canvas {
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            touch-action: none; /* Previene el comportamiento del navegador en dispositivos táctiles */
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #d1d5db;
+            outline: none;
+            border-radius: 9999px;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #4f46e5;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #ffffff;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex items-center justify-center min-h-screen">
+
+    <div class="max-w-4xl w-full bg-white rounded-2xl shadow-lg p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-8">
+
+        <!-- Contenedor del lienzo -->
+        <div id="canvas-container" class="w-full lg:w-3/4 flex-grow relative">
+            <h1 class="text-3xl font-bold text-center text-gray-800 mb-4">Dibujo en el Aire</h1>
+            <p class="text-center text-gray-600 mb-6">Mueve tu dedo índice frente a la cámara para dibujar.</p>
+            <video id="webcam" class="hidden"></video>
+            <!-- p5.js creará el lienzo aquí -->
+        </div>
+
+        <!-- Panel de control -->
+        <div class="w-full lg:w-1/4 flex-shrink-0 bg-gray-50 p-6 rounded-xl space-y-6">
+            <h2 class="text-xl font-semibold text-gray-800">Controles</h2>
+
+            <!-- Selector de Color -->
+            <div>
+                <label for="colorPicker" class="block text-sm font-medium text-gray-700 mb-1">Color del Trazo</label>
+                <input type="color" id="colorPicker" value="#1d4ed8" class="w-full h-10 rounded-lg cursor-pointer border-none">
+            </div>
+
+            <!-- Grosor del Trazo -->
+            <div>
+                <label for="strokeSlider" class="block text-sm font-medium text-gray-700 mb-1">Grosor (<span id="strokeValue">5</span>)</label>
+                <input type="range" id="strokeSlider" min="1" max="50" value="5">
+            </div>
+
+            <!-- Opacidad del Trazo -->
+            <div>
+                <label for="opacitySlider" class="block text-sm font-medium text-gray-700 mb-1">Opacidad (<span id="opacityValue">100%</span>)</label>
+                <input type="range" id="opacitySlider" min="0" max="100" value="100">
+            </div>
+
+            <!-- Botón para borrar -->
+            <button id="clearButton" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg transition duration-200 ease-in-out shadow-md">
+                Borrar
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Bibliotecas de JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.4.0/lib/p5.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script type="text/javascript">
+        // Variables globales
+        let sketch;
+        let video;
+        let hands;
+        let lastX = 0;
+        let lastY = 0;
+        let drawing = false;
+
+        // Elementos del DOM
+        const videoElement = document.getElementById('webcam');
+        const clearButton = document.getElementById('clearButton');
+        const colorPicker = document.getElementById('colorPicker');
+        const strokeSlider = document.getElementById('strokeSlider');
+        const opacitySlider = document.getElementById('opacitySlider');
+        const strokeValue = document.getElementById('strokeValue');
+        const opacityValue = document.getElementById('opacityValue');
+        const canvasContainer = document.getElementById('canvas-container');
+
+        // Configuración de MediaPipe Hands
+        async function setupMediaPipe() {
+            // Inicializa la biblioteca de MediaPipe Hands
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+
+            // Configura las opciones del modelo
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1
+            });
+
+            // Define el callback cuando se detecta una mano
+            hands.onResults(onResults);
+
+            // Obtiene acceso a la cámara y comienza a enviar fotogramas
+            video = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoElement.srcObject = video;
+            videoElement.play();
+
+            // Llama a la función `sendToMediaPipe` en cada fotograma del video
+            videoElement.addEventListener('play', () => {
+                const sendToMediaPipe = async () => {
+                    if (!videoElement.paused && !videoElement.ended) {
+                        await hands.send({ image: videoElement });
+                    }
+                    requestAnimationFrame(sendToMediaPipe);
+                };
+                requestAnimationFrame(sendToMediaPipe);
+            });
+        }
+
+        // Callback de MediaPipe
+        function onResults(results) {
+            sketch.background(248, 250, 252, 20); // Dibuja un fondo semi-transparente para crear el efecto de "rastro"
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const handLandmarks = results.multiHandLandmarks[0];
+
+                // El landmark 8 es la punta del dedo índice
+                const indexFingerTip = handLandmarks[8];
+
+                // Convierte las coordenadas normalizadas (0-1) a coordenadas del lienzo
+                const x = indexFingerTip.x * sketch.width;
+                const y = indexFingerTip.y * sketch.height;
+
+                // Invierte la coordenada X para que coincida con la vista de la cámara
+                const mappedX = sketch.width - x;
+
+                // Si es el primer punto, simplemente actualiza las coordenadas.
+                // Si ya estamos dibujando, dibuja una línea.
+                if (drawing) {
+                    sketch.line(lastX, lastY, mappedX, y);
+                } else {
+                    drawing = true;
+                }
+
+                // Almacena las coordenadas actuales para el próximo fotograma
+                lastX = mappedX;
+                lastY = y;
+            } else {
+                // Si no hay manos detectadas, deja de dibujar
+                drawing = false;
+            }
+        }
+
+        // Configuración de p5.js
+        sketch = new p5(s => {
+            s.setup = () => {
+                const canvas = s.createCanvas(canvasContainer.offsetWidth, window.innerHeight * 0.7);
+                canvas.parent('canvas-container');
+
+                // Configura los estilos iniciales del trazo
+                s.stroke(colorPicker.value);
+                s.strokeWeight(strokeSlider.value);
+                s.background(248, 250, 252);
+            };
+
+            s.draw = () => {
+                // La lógica de dibujo principal se maneja en el callback de MediaPipe (onResults)
+                // Aquí solo se actualizan los estilos del trazo en cada fotograma
+                s.stroke(colorPicker.value);
+                s.strokeWeight(strokeSlider.value);
+                
+                const opacity = s.map(opacitySlider.value, 0, 100, 0, 255);
+                s.stroke(s.red(colorPicker.value), s.green(colorPicker.value), s.blue(colorPicker.value), opacity);
+            };
+
+            // Asegura que el lienzo se redimensione con la ventana
+            s.windowResized = () => {
+                s.resizeCanvas(canvasContainer.offsetWidth, window.innerHeight * 0.7);
+                s.background(248, 250, 252); // Borra el lienzo al redimensionar
+            };
+        }, 'canvas-container');
+
+        // Escuchadores de eventos para los controles
+        clearButton.addEventListener('click', () => {
+            sketch.background(248, 250, 252);
+        });
+
+        strokeSlider.addEventListener('input', () => {
+            strokeValue.textContent = strokeSlider.value;
+        });
+
+        opacitySlider.addEventListener('input', () => {
+            opacityValue.textContent = `${opacitySlider.value}%`;
+        });
+        
+        // Inicia la configuración de MediaPipe y la cámara
+        window.addEventListener('load', setupMediaPipe);
+
+    </script>
+</body>
+</html>
+
