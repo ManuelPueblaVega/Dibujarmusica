@@ -3,217 +3,274 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dibujo en el Aire</title>
-    <!-- Tailwind CSS para un diseño responsivo y atractivo -->
+    <title>Dibujar con Sonido</title>
+    <!-- Tailwind CSS CDN para un diseño limpio y adaptable -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tone.js CDN para la generación de audio -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- TensorFlow.js y Handpose para la detección de manos -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.1/dist/handpose.min.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Fondo oscuro */
+        }
         canvas {
-            border-radius: 1rem;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            touch-action: none; /* Previene el comportamiento del navegador en dispositivos táctiles */
+            background-color: transparent;
+            position: absolute;
+            top: 0;
+            left: 0;
         }
-        input[type="range"] {
-            -webkit-appearance: none;
+        #video-container {
+            position: relative;
             width: 100%;
-            height: 8px;
-            background: #d1d5db;
-            outline: none;
-            border-radius: 9999px;
-            cursor: pointer;
+            height: 80vh;
         }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            background: #4f46e5;
-            border-radius: 50%;
-            cursor: pointer;
-            border: 2px solid #ffffff;
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
     </style>
 </head>
-<body class="p-4 md:p-8 flex items-center justify-center min-h-screen">
+<body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
 
-    <div class="max-w-4xl w-full bg-white rounded-2xl shadow-lg p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-8">
-
-        <!-- Contenedor del lienzo -->
-        <div id="canvas-container" class="w-full lg:w-3/4 flex-grow relative">
-            <h1 class="text-3xl font-bold text-center text-gray-800 mb-4">Dibujo en el Aire</h1>
-            <p class="text-center text-gray-600 mb-6">Mueve tu dedo índice frente a la cámara para dibujar.</p>
-            <video id="webcam" class="hidden"></video>
-            <!-- p5.js creará el lienzo aquí -->
+    <!-- Contenedor principal de la aplicación -->
+    <div class="max-w-3xl w-full bg-gray-800 rounded-xl shadow-2xl overflow-hidden p-6 flex flex-col items-center">
+        <h1 class="text-3xl sm:text-4xl font-bold mb-4 text-center text-blue-400">Dibujar con Sonido</h1>
+        <p class="text-gray-400 text-center mb-6">Usa tu cámara y junta el pulgar y el índice para dibujar y crear sonidos.</p>
+        
+        <!-- Mensaje de carga del modelo -->
+        <div id="loadingMessage" class="text-center text-gray-400 mb-4">
+            Cargando modelo de detección de manos... Por favor, espera.
         </div>
 
-        <!-- Panel de control -->
-        <div class="w-full lg:w-1/4 flex-shrink-0 bg-gray-50 p-6 rounded-xl space-y-6">
-            <h2 class="text-xl font-semibold text-gray-800">Controles</h2>
+        <!-- Contenedor de la cámara y el lienzo de dibujo -->
+        <div id="video-container" class="relative w-full rounded-lg overflow-hidden shadow-inner">
+            <video id="webcam" class="w-full h-full rounded-lg border-2 border-gray-700"></video>
+            <canvas id="drawingCanvas" class="w-full h-full rounded-lg border-2 border-gray-700"></canvas>
+        </div>
 
-            <!-- Selector de Color -->
-            <div>
-                <label for="colorPicker" class="block text-sm font-medium text-gray-700 mb-1">Color del Trazo</label>
-                <input type="color" id="colorPicker" value="#1d4ed8" class="w-full h-10 rounded-lg cursor-pointer border-none">
-            </div>
-
-            <!-- Grosor del Trazo -->
-            <div>
-                <label for="strokeSlider" class="block text-sm font-medium text-gray-700 mb-1">Grosor (<span id="strokeValue">5</span>)</label>
-                <input type="range" id="strokeSlider" min="1" max="50" value="5">
-            </div>
-
-            <!-- Opacidad del Trazo -->
-            <div>
-                <label for="opacitySlider" class="block text-sm font-medium text-gray-700 mb-1">Opacidad (<span id="opacityValue">100%</span>)</label>
-                <input type="range" id="opacitySlider" min="0" max="100" value="100">
-            </div>
-
-            <!-- Botón para borrar -->
-            <button id="clearButton" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg transition duration-200 ease-in-out shadow-md">
+        <!-- Botones de control -->
+        <div class="flex space-x-4 mt-6">
+            <button id="clearButton" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105">
                 Borrar
             </button>
+            <button id="guideButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105">
+                Guía
+            </button>
+        </div>
+
+        <!-- Mensaje de guía o alerta personalizada -->
+        <div id="messageBox" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center z-50 p-4">
+            <div class="bg-gray-800 p-8 rounded-xl shadow-xl max-w-sm text-center">
+                <p class="text-lg text-gray-200">
+                    Con la cámara activada, junta el pulgar y el índice de tu mano para empezar a dibujar. El sonido cambiará según la velocidad de tu movimiento.
+                </p>
+                <button id="closeMessage" class="mt-6 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-full transition-all duration-300">
+                    Entendido
+                </button>
+            </div>
         </div>
 
     </div>
 
-    <!-- Bibliotecas de JavaScript -->
-    <script src="https://cdn.jsdelivr.net/npm/p5@1.4.0/lib/p5.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script>
+        // Esperar a que el DOM esté completamente cargado antes de ejecutar el script
+        window.onload = function() {
+            // Referencias a los elementos del DOM
+            const video = document.getElementById('webcam');
+            const canvas = document.getElementById('drawingCanvas');
+            const ctx = canvas.getContext('2d');
+            const clearButton = document.getElementById('clearButton');
+            const guideButton = document.getElementById('guideButton');
+            const messageBox = document.getElementById('messageBox');
+            const closeMessageButton = document.getElementById('closeMessage');
+            const loadingMessage = document.getElementById('loadingMessage');
 
-    <script type="text/javascript">
-        // Variables globales
-        let sketch;
-        let video;
-        let hands;
-        let lastX = 0;
-        let lastY = 0;
-        let drawing = false;
+            let model;
+            let isDrawing = false;
+            let lastX = 0;
+            let lastY = 0;
+            let lastTime = Date.now();
 
-        // Elementos del DOM
-        const videoElement = document.getElementById('webcam');
-        const clearButton = document.getElementById('clearButton');
-        const colorPicker = document.getElementById('colorPicker');
-        const strokeSlider = document.getElementById('strokeSlider');
-        const opacitySlider = document.getElementById('opacitySlider');
-        const strokeValue = document.getElementById('strokeValue');
-        const opacityValue = document.getElementById('opacityValue');
-        const canvasContainer = document.getElementById('canvas-container');
-
-        // Configuración de MediaPipe Hands
-        async function setupMediaPipe() {
-            // Inicializa la biblioteca de MediaPipe Hands
-            hands = new Hands({
-                locateFile: (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            // Configuración del sintetizador de Tone.js
+            const synth = new Tone.Synth({
+                oscillator: {
+                    type: "sine"
+                },
+                envelope: {
+                    attack: 0.005,
+                    decay: 0.1,
+                    sustain: 0.5,
+                    release: 0.5,
                 }
-            });
-
-            // Configura las opciones del modelo
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1
-            });
-
-            // Define el callback cuando se detecta una mano
-            hands.onResults(onResults);
-
-            // Obtiene acceso a la cámara y comienza a enviar fotogramas
-            video = await navigator.mediaDevices.getUserMedia({ video: true });
-            videoElement.srcObject = video;
-            videoElement.play();
-
-            // Llama a la función `sendToMediaPipe` en cada fotograma del video
-            videoElement.addEventListener('play', () => {
-                const sendToMediaPipe = async () => {
-                    if (!videoElement.paused && !videoElement.ended) {
-                        await hands.send({ image: videoElement });
-                    }
-                    requestAnimationFrame(sendToMediaPipe);
+            }).toDestination();
+            
+            // Función para obtener la posición del evento (ratón o táctil)
+            function getEventPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return {
+                    x: clientX - rect.left,
+                    y: clientY - rect.top
                 };
-                requestAnimationFrame(sendToMediaPipe);
-            });
-        }
-
-        // Callback de MediaPipe
-        function onResults(results) {
-            sketch.background(248, 250, 252, 20); // Dibuja un fondo semi-transparente para crear el efecto de "rastro"
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const handLandmarks = results.multiHandLandmarks[0];
-
-                // El landmark 8 es la punta del dedo índice
-                const indexFingerTip = handLandmarks[8];
-
-                // Convierte las coordenadas normalizadas (0-1) a coordenadas del lienzo
-                const x = indexFingerTip.x * sketch.width;
-                const y = indexFingerTip.y * sketch.height;
-
-                // Invierte la coordenada X para que coincida con la vista de la cámara
-                const mappedX = sketch.width - x;
-
-                // Si es el primer punto, simplemente actualiza las coordenadas.
-                // Si ya estamos dibujando, dibuja una línea.
-                if (drawing) {
-                    sketch.line(lastX, lastY, mappedX, y);
-                } else {
-                    drawing = true;
-                }
-
-                // Almacena las coordenadas actuales para el próximo fotograma
-                lastX = mappedX;
-                lastY = y;
-            } else {
-                // Si no hay manos detectadas, deja de dibujar
-                drawing = false;
             }
-        }
 
-        // Configuración de p5.js
-        sketch = new p5(s => {
-            s.setup = () => {
-                const canvas = s.createCanvas(canvasContainer.offsetWidth, window.innerHeight * 0.7);
-                canvas.parent('canvas-container');
+            // Función para redimensionar el canvas y el video para que coincidan
+            function resizeElements() {
+                const videoContainer = document.getElementById('video-container');
+                const { width, height } = videoContainer.getBoundingClientRect();
+                canvas.width = width;
+                canvas.height = height;
+                video.width = width;
+                video.height = height;
+                // Reiniciar el estilo del contexto después de redimensionar
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = '#4A90E2'; // Color de línea azul vibrante
+            }
+            
+            // Iniciar la cámara y el modelo
+            async function setup() {
+                try {
+                    // Obtener el stream de la cámara
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    video.srcObject = stream;
+                    
+                    // Esperar a que el video cargue los metadatos para obtener las dimensiones
+                    await new Promise((resolve) => video.onloadedmetadata = resolve);
+                    resizeElements();
+                    
+                    // Se agrega una comprobación para asegurar que la biblioteca handpose esté cargada
+                    const loadHandposeModel = async () => {
+                        if (typeof handpose !== 'undefined') {
+                            model = await handpose.load();
+                            loadingMessage.style.display = 'none';
+                            detectHands();
+                        } else {
+                            // Si handpose no está definido, esperar y volver a intentar
+                            console.error("Handpose is not defined. Retrying in 1 second...");
+                            setTimeout(loadHandposeModel, 1000);
+                        }
+                    };
+                    loadHandposeModel();
+                } catch (error) {
+                    console.error("Error al acceder a la cámara o cargar el modelo:", error);
+                    // Actualiza el mensaje de carga para que sea más informativo
+                    loadingMessage.innerHTML = `
+                        <p class="text-red-400 mb-2">Error: No se pudo acceder a la cámara.</p>
+                        <p class="text-gray-400">Asegúrate de haber dado permiso para usar la cámara y recarga la página.</p>
+                    `;
+                }
+            }
 
-                // Configura los estilos iniciales del trazo
-                s.stroke(colorPicker.value);
-                s.strokeWeight(strokeSlider.value);
-                s.background(248, 250, 252);
-            };
-
-            s.draw = () => {
-                // La lógica de dibujo principal se maneja en el callback de MediaPipe (onResults)
-                // Aquí solo se actualizan los estilos del trazo en cada fotograma
-                s.stroke(colorPicker.value);
-                s.strokeWeight(strokeSlider.value);
+            // Detección de manos con el modelo
+            async function detectHands() {
+                const predictions = await model.estimateHands(video, true);
                 
-                const opacity = s.map(opacitySlider.value, 0, 100, 0, 255);
-                s.stroke(s.red(colorPicker.value), s.green(colorPicker.value), s.blue(colorPicker.value), opacity);
-            };
+                if (predictions.length > 0) {
+                    const hand = predictions[0];
+                    const thumbTip = hand.landmarks[4]; // Índice de la punta del pulgar
+                    const indexTip = hand.landmarks[8]; // Índice de la punta del índice
+                    
+                    // Calcular la distancia entre los dos puntos
+                    const distance = Math.sqrt(
+                        Math.pow(thumbTip[0] - indexTip[0], 2) +
+                        Math.pow(thumbTip[1] - indexTip[1], 2)
+                    );
+                    
+                    // Mapear las coordenadas de la cámara al lienzo
+                    const x = thumbTip[0] * (canvas.width / video.videoWidth);
+                    const y = thumbTip[1] * (canvas.height / video.videoHeight);
+                    
+                    // Si la distancia es pequeña, considerar que los dedos están juntos
+                    const fingersArePinched = distance < 30; // Umbral para "juntar los dedos"
+                    
+                    if (fingersArePinched && !isDrawing) {
+                        // Si los dedos se juntan y no estamos dibujando, empezar a dibujar
+                        isDrawing = true;
+                        [lastX, lastY] = [x, y];
+                        lastTime = Date.now();
+                        Tone.start();
+                        synth.triggerAttack();
+                    } else if (fingersArePinched && isDrawing) {
+                        // Si los dedos están juntos y estamos dibujando, continuar
+                        drawFromHand(x, y);
+                    } else if (!fingersArePinched && isDrawing) {
+                        // Si los dedos se separan y estábamos dibujando, detener
+                        stopDrawing();
+                    }
+                } else {
+                    // Si no se detectan manos, detener el dibujo si estaba activo
+                    if (isDrawing) {
+                        stopDrawing();
+                    }
+                }
+                
+                requestAnimationFrame(detectHands);
+            }
+            
+            // Función para dibujar y modular el sonido basada en la posición de la mano
+            function drawFromHand(x, y) {
+                const currentTime = Date.now();
+                const deltaTime = (currentTime - lastTime) / 1000; // Tiempo en segundos
+                
+                // Calcular la velocidad del movimiento
+                const dx = x - lastX;
+                const dy = y - lastY;
+                const speed = Math.sqrt(dx * dx + dy * dy) / deltaTime;
 
-            // Asegura que el lienzo se redimensione con la ventana
-            s.windowResized = () => {
-                s.resizeCanvas(canvasContainer.offsetWidth, window.innerHeight * 0.7);
-                s.background(248, 250, 252); // Borra el lienzo al redimensionar
-            };
-        }, 'canvas-container');
+                // Mapear la velocidad a la frecuencia del sonido
+                const minFreq = 100;
+                const maxFreq = 1000;
+                const frequency = minFreq + (speed * 0.5); // Factor ajustado para la webcam
+                synth.set({ frequency: Math.min(frequency, maxFreq) });
+                
+                // Dibujar la línea
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(x, y);
+                ctx.stroke();
 
-        // Escuchadores de eventos para los controles
-        clearButton.addEventListener('click', () => {
-            sketch.background(248, 250, 252);
-        });
+                // Actualizar las últimas coordenadas y tiempo
+                [lastX, lastY] = [x, y];
+                lastTime = currentTime;
+            }
 
-        strokeSlider.addEventListener('input', () => {
-            strokeValue.textContent = strokeSlider.value;
-        });
+            // Función para detener el dibujo y el sonido
+            function stopDrawing() {
+                if (!isDrawing) return;
+                isDrawing = false;
+                synth.triggerRelease();
+            }
 
-        opacitySlider.addEventListener('input', () => {
-            opacityValue.textContent = `${opacitySlider.value}%`;
-        });
-        
-        // Inicia la configuración de MediaPipe y la cámara
-        window.addEventListener('load', setupMediaPipe);
+            // Evento del botón de borrar
+            clearButton.addEventListener('click', () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            });
+            
+            // Evento para mostrar la guía
+            guideButton.addEventListener('click', () => {
+                messageBox.classList.remove('hidden');
+                messageBox.classList.add('flex');
+            });
+            
+            // Evento para cerrar la guía
+            closeMessageButton.addEventListener('click', () => {
+                messageBox.classList.add('hidden');
+                messageBox.classList.remove('flex');
+            });
 
+            // Llamar a resize al inicio y cuando se redimensiona la ventana
+            window.addEventListener('resize', resizeElements);
+            resizeElements();
+            
+            // Iniciar la configuración de la cámara y el modelo
+            setup();
+        };
     </script>
 </body>
 </html>
-
